@@ -1,7 +1,7 @@
 """
     linkedin-api
 """
-from .linkedin import Linkedin
+from .linkedin import Linkedin, CompanySize
 
 __title__ = "linkedin_api"
 __version__ = "2.0.0-alpha.5"

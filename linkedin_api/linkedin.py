@@ -9,6 +9,7 @@ import uuid
 from operator import itemgetter
 from time import sleep, time
 from urllib.parse import quote, urlencode
+import enum
 
 from linkedin_api.client import Client
 from linkedin_api.utils.helpers import (
@@ -35,6 +36,17 @@ def default_evade():
     Currenly, just delays the request by a random (bounded) time
     """
     sleep(random.randint(2, 5))  # sleep a random duration to try and evade suspention
+
+
+class CompanySize(enum.Enum):
+    EMPLOYEES_1_10 = 'B'
+    EMPLOYEES_11_50 = 'C'
+    EMPLOYEES_51_200 = 'D'
+    EMPLOYEES_201_500 = 'E'
+    EMPLOYEES_501_1000 = 'F'
+    EMPLOYEES_1001_5000 = 'G'
+    EMPLOYEES_5001_10000 = 'H'
+    EMPLOYEES_more_then_10000 = 'I'
 
 
 class Linkedin(object):
@@ -337,7 +349,8 @@ class Linkedin(object):
         if profile_languages:
             filters.append(f'profileLanguage->{"|".join(profile_languages)}')
         if nonprofit_interests:
-            filters.append(f'nonprofitInterest->{"|".join(nonprofit_interests)}')
+            filters.append(
+                f'nonprofitInterest->{"|".join(nonprofit_interests)}')
         if schools:
             filters.append(f'schools->{"|".join(schools)}')
         if service_categories:
@@ -380,42 +393,48 @@ class Linkedin(object):
 
         return results
 
-    def search_companies(self, keywords=None, **kwargs):
+    def search_companies(self, query_id: str, search_string: str = '', regions: list[str] = None,
+                         company_sizes: list[CompanySize] = None,
+                         industries: list[str] = None, **kwargs):
         """Perform a LinkedIn search for companies.
 
-        :param keywords: A list of search keywords (str)
-        :type keywords: list, optional
+        :param query_id: Required parameter for search to work – need to initialize search on site and get from requests there
+        :param search_string: Just like in search input on site
+        :param regions: A list of region codes – obtain them from the site
+        :param company_sizes: A list of required company sizes
+        :param industries: A list of industriy codes – obtain them from the site
 
         :return: List of companies
-        :rtype: list
         """
-        filters = ["resultType->COMPANIES"]
+        offset = 0
+        total = 1000
 
         params = {
-            "filters": "List({})".format(",".join(filters)),
-            "queryContext": "List(spellCorrectionEnabled->true)",
-        }
+                'variables': ('(start:{offset},origin:FACETED_SEARCH,query:'
+                            f'(keywords:{search_string},flagshipSearchIntent:SEARCH_SRP,'
+                            f'queryParameters:List((key:companyHqGeo,value:List({",".join(regions or [])})),'
+                            f'(key:companySize,value:List({",".join(s.value for s in company_sizes or [])})),'
+                            f'(key:industryCompanyVertical,value:List({",".join(industries or [])})),'
+                            '(key:resultType,value:List(COMPANIES))),includeFiltersInResponse:false))'),
+                'queryId': query_id,
+            }
+        query = '&'.join('='.join(kv) for kv in params.items())
+        
+        while offset < total:
+            paged_query = query.format(offset=offset)
+            response = self._fetch(f'/voyager/api/graphql?{paged_query}', base_request=True)
+            if not response.ok:
+                raise ValueError(response.text)
+            data = response.json()['data']['searchDashClustersByAll']
+            offset += data['paging']['count']
+            total = data['paging']['total']
+            if total == 0:
+                return []
 
-        if keywords:
-            params["keywords"] = keywords
+            self.logger.debug('Fetched %s rows from %s', offset, total)
+            
+            yield from data['elements'][-1]['results']
 
-        data = self.search(params, **kwargs)
-
-        results = []
-        for item in data:
-            if item.get("type") != "COMPANY":
-                continue
-            results.append(
-                {
-                    "urn": item.get("targetUrn"),
-                    "urn_id": get_id_from_urn(item.get("targetUrn")),
-                    "name": item.get("title", {}).get("text"),
-                    "headline": item.get("headline", {}).get("text"),
-                    "subline": item.get("subline", {}).get("text"),
-                }
-            )
-
-        return results
 
     def search_jobs(
         self,
@@ -641,7 +660,8 @@ class Linkedin(object):
                     )(img)
                     profile[f"img_{w}_{h}"] = url_segment
 
-            profile["profile_id"] = get_id_from_urn(profile["miniProfile"]["entityUrn"])
+            profile["profile_id"] = get_id_from_urn(
+                profile["miniProfile"]["entityUrn"])
             profile["profile_urn"] = profile["miniProfile"]["entityUrn"]
             profile["member_urn"] = profile["miniProfile"]["objectUrn"]
 
@@ -938,7 +958,8 @@ class Linkedin(object):
         :return: Conversation data
         :rtype: dict
         """
-        res = self._fetch(f"/messaging/conversations/{conversation_urn_id}/events")
+        res = self._fetch(
+            f"/messaging/conversations/{conversation_urn_id}/events")
 
         return res.json()
 
@@ -958,7 +979,8 @@ class Linkedin(object):
         params = {"action": "create"}
 
         if not (conversation_urn_id or recipients):
-            self.logger.debug("Must provide [conversation_urn_id] or [recipients].")
+            self.logger.debug(
+                "Must provide [conversation_urn_id] or [recipients].")
             return True
 
         message_event = {
@@ -1195,7 +1217,8 @@ class Linkedin(object):
 
         if not target_profile_member_urn_id:
             profile = self.get_profile(public_id=target_profile_public_id)
-            target_profile_member_urn_id = int(get_id_from_urn(profile["member_urn"]))
+            target_profile_member_urn_id = int(
+                get_id_from_urn(profile["member_urn"]))
 
         if not network_distance:
             profile_network_info = self.get_profile_network_info(
@@ -1396,7 +1419,8 @@ class Linkedin(object):
             # NOTE: we could also check for the `total` returned in the response.
             # This is in data["data"]["paging"]["total"]
             if (
-                (limit > -1 and len(l_urns) >= limit)  # if our results exceed set limit
+                # if our results exceed set limit
+                (limit > -1 and len(l_urns) >= limit)
                 or len(l_urns) / count >= Linkedin._MAX_REPEATED_REQUESTS
             ) or len(l_raw_urns) == 0:
                 break
