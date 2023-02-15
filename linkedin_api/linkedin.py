@@ -409,9 +409,11 @@ class Linkedin(object):
         offset = 0
         total = 1000
 
+        keywords = f'keywords:{search_string},' if search_string else ''
+
         params = {
                 'variables': ('(start:{offset},origin:FACETED_SEARCH,query:'
-                            f'(keywords:{search_string},flagshipSearchIntent:SEARCH_SRP,'
+                            f'({keywords}flagshipSearchIntent:SEARCH_SRP,'
                             f'queryParameters:List((key:companyHqGeo,value:List({",".join(regions or [])})),'
                             f'(key:companySize,value:List({",".join(s.value for s in company_sizes or [])})),'
                             f'(key:industryCompanyVertical,value:List({",".join(industries or [])})),'
