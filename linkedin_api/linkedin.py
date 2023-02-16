@@ -432,9 +432,10 @@ class Linkedin(object):
             total = data['paging']['total']
             if total == 0:
                 return []
+            if not data['elements']:
+                return []
 
             self.logger.debug('Fetched %s rows from %s', offset, total)
-
             yield from data['elements'][-1]['results']
 
     def search_jobs(
